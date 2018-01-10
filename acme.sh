@@ -2773,6 +2773,33 @@ _clearup() {
   fi
 }
 
+# if any DNS plugins were used, call their commit functions (if they exist)
+# input: comma separated list of DNS plugin filenames
+_dns_commit() {
+  __list="$1"
+
+  for d_api in $( echo "$__list" | tr ',' '\n' | sort | uniq ) ; do
+    (
+      if ! . "$d_api"; then
+        _err "Load file $d_api error. Please check your api file and try again."
+        return 1
+      fi
+
+      __api_name=${d_api##*/}
+      commitcommand="${__api_name%.sh}_commit"
+      if ! _exists "$commitcommand"; then
+        _info "$d_api does not have a '$commitcommand' function, ignoring"
+        return 0
+      fi
+
+      if ! $commitcommand ; then
+        _err "Error with DNS commit"
+        return 1
+      fi
+    )
+  done
+}
+
 _clearupdns() {
   _debug "_clearupdns"
   if [ "$dnsadded" != 1 ] || [ -z "$vlist" ]; then
@@ -2780,6 +2807,7 @@ _clearupdns() {
     return
   fi
 
+  __dns_commit_list=''
   ventries=$(echo "$vlist" | tr ',' ' ')
   for ventry in $ventries; do
     d=$(echo "$ventry" | cut -d "$sep" -f 1)
@@ -2806,6 +2834,8 @@ _clearupdns() {
       continue
     fi
 
+    __dns_commit_list="$__dns_commit_list$d_api,"
+
     (
       if ! . "$d_api"; then
         _err "Load file $d_api error. Please check your api file and try again."
@@ -2827,6 +2857,11 @@ _clearupdns() {
     )
 
   done
+
+  if [ -n "${__dns_commit_list:-}" ] ; then
+    _dns_commit "$__dns_commit_list"
+  fi
+
 }
 
 # webroot  removelevel tokenfile
@@ -3392,6 +3427,7 @@ issue() {
   _info "Getting domain auth token for each domain"
   sep='#'
   dvsep=','
+  __dns_commit_list=''
   if [ -z "$vlist" ]; then
     alldomains=$(echo "$_main_domain,$_alt_domains" | tr ',' ' ')
     _index=1
@@ -3482,6 +3518,7 @@ issue() {
 
         if [ "$d_api" ]; then
           _info "Found domain api file: $d_api"
+          __dns_commit_list="$__dns_commit_list$d_api,"
         else
           _info "$(__red "Add the following TXT record:")"
           _info "$(__red "Domain: '$(__green "$txtdomain")'")"
@@ -3530,6 +3567,10 @@ issue() {
   fi
 
   if [ "$dnsadded" = '1' ]; then
+    if [ -n "${__dns_commit_list:-}" ] ; then
+      _dns_commit "$__dns_commit_list"
+    fi
+
     if [ -z "$Le_DNSSleep" ]; then
       Le_DNSSleep="$DEFAULT_DNS_SLEEP"
     else
